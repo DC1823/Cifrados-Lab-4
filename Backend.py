@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Security
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -9,6 +10,8 @@ from typing import *
 # Configuración JWT
 SECRET_KEY = "your_secret_key"
 ALGORITHM = "HS256"
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -34,6 +37,16 @@ def get_password_hash(password):
 
 def create_access_token(data: dict):
 	return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+	try:
+		payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+		username: str = payload.get("sub")
+		if username is None or username not in db_users:
+			raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+		return username
+	except JWTError:
+		raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
 @app.post("/register")
 def register(user: User):
@@ -63,15 +76,26 @@ def download_file(filename: str):
 	return {"filename": filename, "content": db_files[filename]["content"].decode(), "public_key": db_files[filename]["public_key"]}
 
 @app.post("/guardar")
-def save_file(file: UploadFile = File(...), username: str = "anonymous", sign: bool = False):
+def save_file(file: UploadFile = File(...), sign: bool = False, username: str = Depends(get_current_user)):
 	if username not in db_keys:
 		raise HTTPException(status_code=400, detail="User not registered")
+
 	contents = file.file.read()
 	file_hash = hashlib.sha256(contents).hexdigest()
+
 	signature = None
 	if sign:
 		signature = rsa.sign(file_hash.encode(), db_keys[username], 'SHA-256').hex()
-	db_files[file.filename] = {"hash": file_hash, "content": contents, "signature": signature, "public_key": db_keys[username].publickey().save_pkcs1().decode()}
+
+	public_key_pem = rsa.PublicKey(db_keys[username].n, db_keys[username].e).save_pkcs1().decode()
+
+	db_files[file.filename] = {
+		"hash": file_hash,
+		"content": contents,
+		"signature": signature,
+		"public_key": public_key_pem
+	}
+
 	return {"filename": file.filename, "hash": file_hash, "signature": signature}
 
 @app.post("/verificar")
