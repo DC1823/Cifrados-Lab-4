@@ -1,3 +1,4 @@
+
 import sys
 import requests
 from PySide6.QtWidgets import *
@@ -19,18 +20,23 @@ class App(QWidget):
 	def init_ui(self):
 		layout = QVBoxLayout()
 
-		self.label_email = QLabel("Username:")
-		self.input_email = QLineEdit()
+		self.input_username = QLineEdit()
+		self.input_username.setPlaceholderText("Username")
+		self.input_username.returnPressed.connect(lambda: self.input_password.setFocus())
 
-		self.label_password = QLabel("Password:")
 		self.input_password = QLineEdit()
-		self.input_password.setEchoMode(QLineEdit.Password)
+		self.input_password.setEchoMode(QLineEdit.EchoMode.Password)
+		self.input_password.setPlaceholderText("Password")
+		self.input_password.returnPressed.connect(self.login)
 
 		self.btn_register = QPushButton("Register")
 		self.btn_register.clicked.connect(self.register)
 
 		self.btn_login = QPushButton("Login")
 		self.btn_login.clicked.connect(self.login)
+
+		self.btn_logout = QPushButton("Logout")
+		self.btn_logout.clicked.connect(self.logout)
 
 		self.btn_list_files = QPushButton("List Files")
 		self.btn_list_files.clicked.connect(self.list_files)
@@ -41,63 +47,92 @@ class App(QWidget):
 		self.btn_upload_sign = QPushButton("Upload Signed File")
 		self.btn_upload_sign.clicked.connect(self.upload_signed_file)
 
-		self.btn_download = QPushButton("Download File")
-		self.btn_download.clicked.connect(self.download_file)
-
 		self.btn_verify = QPushButton("Verify File")
 		self.btn_verify.clicked.connect(self.verify_file)
 
-		self.output_console = QTextEdit()
-		self.output_console.setReadOnly(True)
-		
-		layout.addWidget(self.label_email)
-		layout.addWidget(self.input_email)
-		layout.addWidget(self.label_password)
+		self.file_view = QListWidget()
+		self.file_view.itemDoubleClicked.connect(self.download_file)
+
+		layout.addWidget(self.input_username)
 		layout.addWidget(self.input_password)
 		layout.addWidget(self.btn_register)
 		layout.addWidget(self.btn_login)
+
+		layout.addWidget(self.btn_logout)
 		layout.addWidget(self.btn_list_files)
 		layout.addWidget(self.btn_upload)
 		layout.addWidget(self.btn_upload_sign)
-		layout.addWidget(self.btn_download)
 		layout.addWidget(self.btn_verify)
-		layout.addWidget(self.output_console)
-		
+		layout.addWidget(self.file_view)
+
+		self.btn_logout.hide()
+		self.btn_list_files.hide()
+		self.btn_upload.hide()
+		self.btn_upload_sign.hide()
+		self.btn_verify.hide()
+		self.file_view.hide()
+
 		self.setLayout(layout)
 		self.setWindowTitle("Secure File Manager")
 
 	def register(self):
-		email = self.input_email.text()
+		email = self.input_username.text()
 		password = self.input_password.text()
 		response = requests.post(f"{API_URL}/register", json={"username": email, "password": password})
-		show_message("Register", response.json().get("message", "Error"))
+		if response.status_code != 200:
+			show_message("Register", f'Error: {response.json().get("detail", "Error")}')
+		else:
+			show_message("Register", "Successfully Registered")
 
 	def login(self):
-		email = self.input_email.text()
+		email = self.input_username.text()
 		password = self.input_password.text()
 		response = requests.post(f"{API_URL}/login", json={"username": email, "password": password})
-		if response.status_code == 200:
-			self.token = response.json()["access_token"]
-			show_message("Login", "Login Successful!")
-		else:
+		if response.status_code != 200:
 			show_message("Login", "Invalid Credentials")
+			self.logout()
+		else:
+			self.token = response.json()["access_token"]
+			self.input_username.hide()
+			self.input_password.hide()
+			self.btn_register.hide()
+			self.btn_login.hide()
+
+			self.btn_logout.show()
+			self.btn_list_files.show()
+			self.btn_upload.show()
+			self.btn_upload_sign.show()
+			self.btn_verify.show()
+			self.file_view.show()
+			self.list_files()
+
+	def logout(self):
+		self.input_username.clear()
+		self.input_password.clear()
+
+		self.input_username.show()
+		self.input_password.show()
+		self.btn_register.show()
+		self.btn_login.show()
+
+		self.btn_logout.hide()
+		self.btn_list_files.hide()
+		self.btn_upload.hide()
+		self.btn_upload_sign.hide()
+		self.btn_verify.hide()
+		self.file_view.hide()
 
 	def list_files(self):
-		if not self.token:
-			show_message("Error", "Please login first!")
-			return
 		headers = {"Authorization": f"Bearer {self.token}"}
 		response = requests.get(f"{API_URL}/archivos", headers=headers)
 		if response.status_code == 200:
 			files = response.json()
-			self.output_console.setText("\n".join(files) if files else "No files found.")
+			self.file_view.clear()
+			self.file_view.addItems(files)
 		else:
 			show_message("Error", "Failed to retrieve files")
 
 	def upload_file(self):
-		if not self.token:
-			show_message("Error", "Please login first!")
-			return
 		file_path, _ = QFileDialog.getOpenFileName(self, "Select File")
 		if not file_path:
 			return
@@ -106,53 +141,53 @@ class App(QWidget):
 			headers = {"Authorization": f"Bearer {self.token}"}
 			response = requests.post(f"{API_URL}/guardar", files=files, headers=headers)
 		show_message("Upload", response.text)
+		self.list_files()
 
 	def upload_signed_file(self):
-		if not self.token:
-			show_message("Error", "Please login first!")
-			return
 		file_path, _ = QFileDialog.getOpenFileName(self, "Select File")
 		if not file_path:
 			return
 		with open(file_path, "rb") as f:
+			data = {"sign": "true"}
 			files = {"file": f}
 			headers = {"Authorization": f"Bearer {self.token}"}
-			response = requests.post(f"{API_URL}/guardar", files=files, headers=headers)
+			response = requests.post(f"{API_URL}/guardar", files=files, data=data, headers=headers)
 		show_message("Upload", response.text)
+		self.list_files()
 
-	def download_file(self):
-		filename, ok = QFileDialog.getSaveFileName(self, "Save File")
-		if not filename:
+	def download_file(self, item: QListWidgetItem):
+		folder_path = QFileDialog.getExistingDirectory(self, "Select Location", "./Out")
+		if not folder_path:
 			return
-		response = requests.get(f"{API_URL}/archivos")
+		headers = {"Authorization": f"Bearer {self.token}"}
+		response = requests.get(f"{API_URL}/archivos/{item.text()}/descargar", headers=headers)
 		if response.status_code == 200:
-			files = response.json()
-			if files:
-				response = requests.get(f"{API_URL}/archivos/{files[0]}/descargar")
-				with open(filename, "wb") as f:
-					f.write(response.json().get("content", "").encode())
-				show_message("Download", "File downloaded successfully!")
+			with open(f"{folder_path}/{item.text()}", "wb") as f:
+				f.write(response.json().get("content", "").encode())
+			show_message("Download", "File downloaded successfully!")
 		else:
-			show_message("Error", "No files found")
+			show_message("Error", f"Error: {response.text}")
 
 	def verify_file(self):
-		if not self.token:
-			show_message("Error", "Please login first!")
-			return
 		filename, _ = QFileDialog.getOpenFileName(self, "Select File to Verify")
 		if not filename:
 			return
-		public_key, ok = QInputDialog.getText(self, "Public Key", "Enter Public Key:")
-		if not ok or not public_key:
+
+		public_key, ok = QInputDialog.getMultiLineText(self, "Public Key", "Paste the public key:")
+		signature, ok2 = QInputDialog.getText(self, "Signature", "Paste the file signature:")
+
+		if not ok or not ok2:
 			return
-		signature, ok = QInputDialog.getText(self, "Signature", "Enter Signature:")
-		if not ok or not signature:
-			return
-		response = requests.post(f"{API_URL}/verificar", json={"filename": filename, "signature": signature, "public_key": public_key})
+
+		with open(filename, "rb") as f:
+			files = {"file": f}
+			data = {"signature": signature, "public_key": public_key}
+			response = requests.post(f"{API_URL}/verificar", files=files, data=data)
+
 		if response.status_code == 200:
-			show_message("Verify", "Signature is valid!")
+			show_message("Verification", "File is authentic")
 		else:
-			show_message("Verify", "Invalid signature")
+			show_message("Verification", f"Invalid: {response.text}")
 
 if __name__ == "__main__":
 	app = QApplication(sys.argv)
