@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import hashlib
-import rsa
 from typing import *
 from base64 import b64encode, b64decode
 from datetime import datetime, timedelta
@@ -21,7 +20,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app = FastAPI()
 # filename - priv key
-db_sign_keys : Dict[str, rsa.PrivateKey] = {}
+db_sign_keys : Dict[str, str] = {}
 db_files: Dict[str, Dict] = {}
 db_users: Dict[str, str] = {}
 
@@ -157,5 +156,5 @@ def verify_file(
 			return {"message": "Signature is valid"}
 		else:
 			raise HTTPException(status_code=400, detail="Invalid signature")
-	except rsa.VerificationError:
+	except:
 		raise HTTPException(status_code=400, detail="Invalid signature")
