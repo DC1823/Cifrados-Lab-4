@@ -168,7 +168,7 @@ class App(QWidget):
 		if not file_path:
 			return
 
-		file_data = b64encode(open(file_path, "rb").read()).decode()
+		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
 
 		headers = {"Authorization": f"Bearer {self.token}"}
 		# POST
@@ -190,7 +190,7 @@ class App(QWidget):
 		if not file_path:
 			return
 
-		file_data = b64encode(open(file_path, "rb").read()).decode()
+		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
 
 		headers = {"Authorization": f"Bearer {self.token}"}
 		# POST

@@ -93,7 +93,6 @@ def upload_file(
 	if username not in db_users:
 		raise HTTPException(status_code=400, detail="User not registered")
 
-	file_data = b64encode(encrypt(b64decode(file_data), file_pub_key)).decode()
 	file_hash = hashlib.sha256(b64decode(file_data)).hexdigest()
 
 	signature = None
