@@ -2,7 +2,7 @@
 
 ## Backend:
 ```bash
-cd B
+cd Backend
 uvicorn Backend:app
 ```
 
