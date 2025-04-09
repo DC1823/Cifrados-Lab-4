@@ -1,7 +1,9 @@
-
 import sys
 import requests
 from PySide6.QtWidgets import *
+
+from B.Encrypt import *
+from B.Sign import *
 
 API_URL = "http://127.0.0.1:8000"
 
@@ -15,6 +17,8 @@ class App(QWidget):
 	def __init__(self):
 		super().__init__()
 		self.token = ""
+		self.pub_key = ""
+		self.priv_key = ""
 		self.init_ui()
 
 	def init_ui(self):
@@ -22,11 +26,13 @@ class App(QWidget):
 
 		self.input_username = QLineEdit()
 		self.input_username.setPlaceholderText("Username")
+		self.input_username.setText("123")
 		self.input_username.returnPressed.connect(lambda: self.input_password.setFocus())
 
 		self.input_password = QLineEdit()
 		self.input_password.setEchoMode(QLineEdit.EchoMode.Password)
 		self.input_password.setPlaceholderText("Password")
+		self.input_password.setText("123")
 		self.input_password.returnPressed.connect(self.login)
 
 		self.btn_register = QPushButton("Register")
@@ -76,35 +82,48 @@ class App(QWidget):
 		self.setWindowTitle("Secure File Manager")
 
 	def register(self):
-		email = self.input_username.text()
+		username = self.input_username.text()
 		password = self.input_password.text()
-		response = requests.post(f"{API_URL}/register", json={"username": email, "password": password})
-		if response.status_code != 200:
-			show_message("Register", f'Error: {response.json().get("detail", "Error")}')
+		if username == "" or password == "":
+			show_message("Register", "Empty Credentials")
 		else:
-			show_message("Register", "Successfully Registered")
+			response = requests.post(f"{API_URL}/register", json={"username": username, "password": password})
+			if response.status_code != 200:
+				show_message("Register", f'Error: {response.json().get("detail", "Error")}')
+			else:
+				pub_key, priv_key = generate_rsa_keys()
+				if not os.path.exists("./Keys"): os.makedirs("./Keys")
+				open(f"./Keys/{username}.pub", "w").write(pub_key)
+				open(f"./Keys/{username}", "w").write(priv_key)
+				show_message("Register", "Successfully Registered")
 
 	def login(self):
-		email = self.input_username.text()
+		username = self.input_username.text()
 		password = self.input_password.text()
-		response = requests.post(f"{API_URL}/login", json={"username": email, "password": password})
-		if response.status_code != 200:
-			show_message("Login", "Invalid Credentials")
-			self.logout()
+		if username == "" or password == "":
+			show_message("Register", "Empty Credentials")
 		else:
-			self.token = response.json()["access_token"]
-			self.input_username.hide()
-			self.input_password.hide()
-			self.btn_register.hide()
-			self.btn_login.hide()
+			response = requests.post(f"{API_URL}/login", json={"username": username, "password": password})
+			if response.status_code != 200:
+				show_message("Login", "Invalid Credentials")
+				self.logout()
+			else:
+				self.token = response.json()["access_token"]
+				self.pub_key = open(f"./Keys/{username}.pub", "r").read()
+				self.priv_key = open(f"./Keys/{username}", "r").read()
 
-			self.btn_logout.show()
-			self.btn_list_files.show()
-			self.btn_upload.show()
-			self.btn_upload_sign.show()
-			self.btn_verify.show()
-			self.file_view.show()
-			self.list_files()
+				self.input_username.hide()
+				self.input_password.hide()
+				self.btn_register.hide()
+				self.btn_login.hide()
+
+				self.btn_logout.show()
+				self.btn_list_files.show()
+				self.btn_upload.show()
+				self.btn_upload_sign.show()
+				self.btn_verify.show()
+				self.file_view.show()
+				self.list_files()
 
 	def logout(self):
 		self.input_username.clear()
@@ -124,7 +143,12 @@ class App(QWidget):
 
 	def list_files(self):
 		headers = {"Authorization": f"Bearer {self.token}"}
-		response = requests.get(f"{API_URL}/archivos", headers=headers)
+		# GET
+		response = requests.get(
+			f"{API_URL}/archivos",
+			headers=headers
+		)
+		# GET
 		if response.status_code == 200:
 			files = response.json()
 			self.file_view.clear()
@@ -136,10 +160,22 @@ class App(QWidget):
 		file_path, _ = QFileDialog.getOpenFileName(self, "Select File")
 		if not file_path:
 			return
-		with open(file_path, "rb") as f:
-			files = {"file": f}
-			headers = {"Authorization": f"Bearer {self.token}"}
-			response = requests.post(f"{API_URL}/guardar", files=files, headers=headers)
+
+		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
+		print(file_data)
+
+		headers = {"Authorization": f"Bearer {self.token}"}
+		# POST
+		response = requests.post(
+			f"{API_URL}/guardar",
+			data={
+				"file_name": os.path.basename(file_path),
+				"file_data": file_data,
+				"file_pub_key": self.pub_key
+			},
+			headers=headers
+		)
+		# POST
 		show_message("Upload", response.text)
 		self.list_files()
 
@@ -147,11 +183,22 @@ class App(QWidget):
 		file_path, _ = QFileDialog.getOpenFileName(self, "Select File")
 		if not file_path:
 			return
-		with open(file_path, "rb") as f:
-			data = {"sign": "true"}
-			files = {"file": f}
-			headers = {"Authorization": f"Bearer {self.token}"}
-			response = requests.post(f"{API_URL}/guardar", files=files, data=data, headers=headers)
+
+		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
+
+		headers = {"Authorization": f"Bearer {self.token}"}
+		# POST
+		response = requests.post(
+			f"{API_URL}/guardar",
+			data={
+				"file_name": os.path.basename(file_path),
+				"file_data": file_data,
+				"file_pub_key": self.pub_key,
+				"sign_priv_key": self.priv_key
+			},
+			headers=headers
+		)
+		# POST
 		show_message("Upload", response.text)
 		self.list_files()
 
@@ -159,35 +206,46 @@ class App(QWidget):
 		folder_path = QFileDialog.getExistingDirectory(self, "Select Location", "./Out")
 		if not folder_path:
 			return
+
 		headers = {"Authorization": f"Bearer {self.token}"}
-		response = requests.get(f"{API_URL}/archivos/{item.text()}/descargar", headers=headers)
+		# GET
+		response = requests.get(
+			f"{API_URL}/archivos/{item.text()}/descargar",
+			headers=headers
+		)
+		# GET
 		if response.status_code == 200:
-			with open(f"{folder_path}/{item.text()}", "wb") as f:
-				f.write(response.json().get("content", "").encode())
+			print(response.json())
+			file_data = decrypt(b64decode(response.json().get("content", "")), self.priv_key)
+			open(f"{folder_path}/{response.json().get('filename', '')}", "wb").write(file_data)
 			show_message("Download", "File downloaded successfully!")
 		else:
-			show_message("Error", f"Error: {response.text}")
+			show_message("Error", response.json().get("detail", "Unknown error"))
 
 	def verify_file(self):
-		filename, _ = QFileDialog.getOpenFileName(self, "Select File to Verify")
-		if not filename:
+		file_path, _ = QFileDialog.getOpenFileName(self, "Select File to Verify")
+		if not file_path:
 			return
 
-		public_key, ok = QInputDialog.getMultiLineText(self, "Public Key", "Paste the public key:")
-		signature, ok2 = QInputDialog.getText(self, "Signature", "Paste the file signature:")
+		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
 
-		if not ok or not ok2:
-			return
-
-		with open(filename, "rb") as f:
-			files = {"file": f}
-			data = {"signature": signature, "public_key": public_key}
-			response = requests.post(f"{API_URL}/verificar", files=files, data=data)
+		headers = {"Authorization": f"Bearer {self.token}"}
+		# POST
+		response = requests.post(
+			f"{API_URL}/verificar",
+			data={
+				"file_name": os.path.basename(file_path),
+				"file_data": file_data,
+				"sign_pub_key": self.pub_key
+			},
+			headers=headers
+		)
+		#POST
 
 		if response.status_code == 200:
 			show_message("Verification", "File is authentic")
 		else:
-			show_message("Verification", f"Invalid: {response.text}")
+			show_message("Verification", response.json().get("detail", "Unknown error"))
 
 if __name__ == "__main__":
 	app = QApplication(sys.argv)

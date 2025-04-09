@@ -1,15 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Form
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import hashlib
 import rsa
-from typing import Dict
+from typing import *
 from base64 import b64encode, b64decode
 from datetime import datetime, timedelta
 
-from Encrypt import encrypt, decrypt
+from Encrypt import encrypt, decrypt, generate_rsa_keys
+from Sign import sign, verify_signature
 
 # JWT Configuration
 SECRET_KEY = "your_secret_key"
@@ -19,8 +20,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app = FastAPI()
-
-db_keys: Dict[str, rsa.PrivateKey] = {}
+# filename - priv key
+db_sign_keys : Dict[str, rsa.PrivateKey] = {}
 db_files: Dict[str, Dict] = {}
 db_users: Dict[str, str] = {}
 
@@ -58,10 +59,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 def register(user: User):
 	if user.username in db_users:
 		raise HTTPException(status_code=400, detail="User already exists")
+
+	# Hash Password
 	db_users[user.username] = get_password_hash(user.password)
-	(pub_key, priv_key) = rsa.newkeys(2048)
-	db_keys[user.username] = priv_key
-	return {"message": "User registered successfully", "public_key": pub_key.save_pkcs1().decode()}
+
+	return {"message": "User registered successfully"}
 
 @app.post("/login", response_model=Token)
 def login(user: User):
@@ -74,66 +76,79 @@ def login(user: User):
 def list_files():
 	return list(db_files.keys())
 
-@app.get("/archivos/{filename}/descargar")
-def download_file(filename: str, username: str = Depends(get_current_user)):
-	if filename not in db_files:
-		raise HTTPException(status_code=404, detail="File not found")
-
-	priv_key = db_keys.get(username)
-	if not priv_key:
-		raise HTTPException(status_code=400, detail="No private key for user")
-
-	try:
-		encrypted = b64decode(db_files[filename]["content"])
-		chunk_size = 256
-		chunks = [encrypted[i:i+chunk_size] for i in range(0, len(encrypted), chunk_size)]
-		decrypted = b"".join(chunks)
-	except Exception as e:
-		raise HTTPException(status_code=500, detail=f"Decryption failed: {str(e)}")
-
-	return {
-		"filename": filename,
-		"content": decrypted.decode(errors="ignore"),
-		"public_key": db_files[filename]["public_key"]
-	}
-
 @app.post("/guardar")
-def save_file(file: UploadFile = File(...), sign: bool = False, username: str = Depends(get_current_user)):
-	if username not in db_keys:
+def upload_file(
+	file_name: str = Form(...),
+	file_data: str = Form(...),
+	file_pub_key: str = Form(...),
+	sign_priv_key: Optional[str] = Form(None),
+	username: str = Depends(get_current_user)
+):
+	if username not in db_users:
 		raise HTTPException(status_code=400, detail="User not registered")
 
-	contents = file.file.read()
-	file_hash = hashlib.sha256(contents).hexdigest()
-
-	priv_key = db_keys[username]
-	try:
-		chunks = [rsa.sign(contents[i:i+128], priv_key, 'SHA-256') for i in range(0, len(contents), 128)]
-		encrypted = b"".join(chunks)
-	except Exception as e:
-		raise HTTPException(status_code=500, detail=f"Encryption failed: {str(e)}")
+	file_hash = hashlib.sha256(b64decode(file_data)).hexdigest()
 
 	signature = None
-	if sign:
-		signature = rsa.sign(file_hash.encode(), priv_key, 'SHA-256').hex()
+	if sign_priv_key:
+		signature = sign(b64decode(file_data), sign_priv_key)
 
-	public_key_pem = rsa.PublicKey(priv_key.n, priv_key.e).save_pkcs1().decode()
-
-	db_files[file.filename] = {
+	db_files[f"{username}:{file_name}"] = {
 		"hash": file_hash,
-		"content": b64encode(encrypted).decode(),
 		"signature": signature,
-		"public_key": public_key_pem
+		"file_pub_key": file_pub_key,
+		"content": file_data
 	}
 
-	return {"filename": file.filename, "hash": file_hash, "signature": signature}
+	return {"filename": file_name, "filesize": len(file_data), "signature": signature, "hash": file_hash}
+
+@app.get("/archivos/{filename}/descargar")
+def download_file(
+	filename: str,
+	username: str = Depends(get_current_user)
+):
+	if username not in db_users:
+		raise HTTPException(status_code=400, detail="User not registered")
+
+	if filename not in db_files:
+		raise HTTPException(status_code=400, detail="File not found")
+
+	file_data = db_files[filename]["content"]
+
+	return {
+		"filename": filename.rsplit(":", 1)[-1],
+		"content": file_data,
+		"file_pub_key": db_files[filename]["file_pub_key"]
+	}
 
 @app.post("/verificar")
-def verify_file(file: UploadFile = File(...), signature: str = "", public_key: str = ""):
-	contents = file.file.read()
-	file_hash = hashlib.sha256(contents).hexdigest().encode()
-	pub_key = rsa.PublicKey.load_pkcs1(public_key.encode())
+def verify_file(
+	file_name: str = Form(...),
+	file_data: str = Form(...),
+	sign_pub_key: str = Form(...),
+	username: str = Depends(get_current_user)
+):
+	if username not in db_users:
+		raise HTTPException(status_code=400, detail="User not registered")
+
+	if f"{username}:{file_name}" not in db_files:
+		raise HTTPException(status_code=400, detail="File not found")
+
+	remote_file = db_files[f"{username}:{file_name}"]
+
+	file_hash = hashlib.sha256(b64decode(file_data)).hexdigest()
+
+	if file_hash != remote_file["hash"]:
+		raise HTTPException(status_code=400, detail=f"Hash mismatch:\n\tRemote: {remote_file['hash']}\n\tLocal:  {file_hash}")
+
 	try:
-		rsa.verify(file_hash, bytes.fromhex(signature), pub_key)
-		return {"message": "Signature is valid"}
+		signature = remote_file["signature"]
+		if not signature:
+			raise HTTPException(status_code=400, detail="File on Remote is not signed, But both Hashes are the same.")
+
+		if verify_signature(b64decode(file_data), remote_file["signature"], sign_pub_key):
+			return {"message": "Signature is valid"}
+		else:
+			raise HTTPException(status_code=400, detail="Invalid signature")
 	except rsa.VerificationError:
 		raise HTTPException(status_code=400, detail="Invalid signature")
