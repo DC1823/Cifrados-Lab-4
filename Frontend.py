@@ -168,7 +168,7 @@ class App(QWidget):
 		if not file_path:
 			return
 
-		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
+		file_data = b64encode(open(file_path, "rb").read()).decode()
 
 		headers = {"Authorization": f"Bearer {self.token}"}
 		# POST
@@ -190,7 +190,7 @@ class App(QWidget):
 		if not file_path:
 			return
 
-		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
+		file_data = b64encode(open(file_path, "rb").read()).decode()
 
 		headers = {"Authorization": f"Bearer {self.token}"}
 		# POST
@@ -221,8 +221,11 @@ class App(QWidget):
 		)
 		# GET
 		if response.status_code == 200:
-			print(response.json())
-			file_data = decrypt(b64decode(response.json().get("content", "")), self.priv_key)
+			try:
+				file_data = decrypt(b64decode(response.json().get("content", "")), self.priv_key)
+			except:
+				show_message("Error", "This file does not belong to you.")
+
 			open(f"{folder_path}/{response.json().get('filename', '')}", "wb").write(file_data)
 			show_message("Download", "File downloaded successfully!")
 		else:

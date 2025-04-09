@@ -93,6 +93,7 @@ def upload_file(
 	if username not in db_users:
 		raise HTTPException(status_code=400, detail="User not registered")
 
+	file_data = b64encode(encrypt(b64decode(file_data), file_pub_key)).decode()
 	file_hash = hashlib.sha256(b64decode(file_data)).hexdigest()
 
 	signature = None
@@ -122,7 +123,7 @@ def download_file(
 	file_data = db_files[filename]["content"]
 
 	return {
-		"filename": filename.rsplit(":", 1)[-1],
+		"filename": filename.rsplit(" : ", 1)[-1],
 		"content": file_data,
 		"file_pub_key": db_files[filename]["file_pub_key"]
 	}
@@ -147,11 +148,11 @@ def verify_file(
 	if file_hash != remote_file["hash"]:
 		raise HTTPException(status_code=400, detail=f"Hash mismatch:\n\tRemote: {remote_file['hash']}\n\tLocal:  {file_hash}")
 
-	try:
-		signature = remote_file["signature"]
-		if not signature:
-			raise HTTPException(status_code=400, detail="File on Remote is not signed, But both Hashes are the same.")
+	signature = remote_file["signature"]
+	if not signature:
+		raise HTTPException(status_code=400, detail="File on Remote is not signed, But both Hashes are the same.")
 
+	try:
 		if verify_signature(b64decode(file_data), remote_file["signature"], sign_pub_key):
 			return {"message": "Signature is valid"}
 		else:
