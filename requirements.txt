@@ -5,3 +5,5 @@ passlib
 python-jose
 pycryptodome
 pydantic
+python-multipart
+uvicorn 
