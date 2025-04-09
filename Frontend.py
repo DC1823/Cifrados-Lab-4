@@ -3,8 +3,8 @@ import requests
 from PySide6.QtWidgets import *
 from PySide6.QtGui import *
 
-from B.Encrypt import *
-from B.Sign import *
+from Backend.Encrypt import *
+from Backend.Sign import *
 
 API_URL = "http://127.0.0.1:8000"
 
