@@ -74,7 +74,14 @@ def login(user: User):
 
 @app.get("/archivos")
 def list_files():
-	return list(db_files.keys())
+	return [
+		{
+			"file_name": file_name,
+			"signed": bool(file_data.get("signature")),
+			"hash": file_data.get("hash")
+		}
+		for file_name, file_data in db_files.items()
+	]
 
 @app.post("/guardar")
 def upload_file(
@@ -93,7 +100,7 @@ def upload_file(
 	if sign_priv_key:
 		signature = sign(b64decode(file_data), sign_priv_key)
 
-	db_files[f"{username}:{file_name}"] = {
+	db_files[f"@{username} : {file_name}"] = {
 		"hash": file_hash,
 		"signature": signature,
 		"file_pub_key": file_pub_key,
@@ -131,10 +138,10 @@ def verify_file(
 	if username not in db_users:
 		raise HTTPException(status_code=400, detail="User not registered")
 
-	if f"{username}:{file_name}" not in db_files:
+	if f"@{username} : {file_name}" not in db_files:
 		raise HTTPException(status_code=400, detail="File not found")
 
-	remote_file = db_files[f"{username}:{file_name}"]
+	remote_file = db_files[f"@{username} : {file_name}"]
 
 	file_hash = hashlib.sha256(b64decode(file_data)).hexdigest()
 

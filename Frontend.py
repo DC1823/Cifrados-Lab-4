@@ -1,6 +1,7 @@
 import sys
 import requests
 from PySide6.QtWidgets import *
+from PySide6.QtGui import *
 
 from B.Encrypt import *
 from B.Sign import *
@@ -96,6 +97,7 @@ class App(QWidget):
 				open(f"./Keys/{username}.pub", "w").write(pub_key)
 				open(f"./Keys/{username}", "w").write(priv_key)
 				show_message("Register", "Successfully Registered")
+				self.login()
 
 	def login(self):
 		username = self.input_username.text()
@@ -152,7 +154,12 @@ class App(QWidget):
 		if response.status_code == 200:
 			files = response.json()
 			self.file_view.clear()
-			self.file_view.addItems(files)
+			for file in files:
+				item = QListWidgetItem(file.get("file_name", "ERROR"))
+				item.setToolTip(f"Hash: {file.get('hash', 'ERROR')}")
+				if (file.get("signed", False)):
+					item.setForeground(QColor(100, 255, 100))
+				self.file_view.addItem(item)
 		else:
 			show_message("Error", "Failed to retrieve files")
 
@@ -162,7 +169,6 @@ class App(QWidget):
 			return
 
 		file_data = b64encode(encrypt(open(file_path, "rb").read(), self.pub_key)).decode()
-		print(file_data)
 
 		headers = {"Authorization": f"Bearer {self.token}"}
 		# POST
@@ -243,7 +249,7 @@ class App(QWidget):
 		#POST
 
 		if response.status_code == 200:
-			show_message("Verification", "File is authentic")
+			show_message("Verification", "Signature & Hash match.")
 		else:
 			show_message("Verification", response.json().get("detail", "Unknown error"))
 
